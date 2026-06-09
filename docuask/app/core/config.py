@@ -12,9 +12,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     top_k_chunks: int = 5
 
-    # Groq models
-    embedding_model: str = "text-embedding-3-small"   # we use OpenAI embeddings (free tier)
-    chat_model: str = "llama-3.1-8b-instant"                  # Groq's free fast model
+    embedding_model: str = "text-embedding-3-small"
+    chat_model: str = "llama-3.1-8b-instant"
 
     class Config:
         env_file = ".env"

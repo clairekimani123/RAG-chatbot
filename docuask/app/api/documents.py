@@ -1,10 +1,8 @@
 """
-/api/documents endpoints:
-
-  POST   /api/documents/upload   → upload + ingest a PDF
-  GET    /api/documents           → list all documents
-  GET    /api/documents/{id}      → get one document
-  DELETE /api/documents/{id}      → delete document + its chunks
+Updated documents.py — Week 4 changes:
+  - Upload now accepts PDF, PNG, JPEG, TXT, DOCX
+  - All endpoints require authentication
+  - Users only see their own documents
 """
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
@@ -13,22 +11,27 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.db.database import get_db
+from app.db.models import User
+from app.services.auth_service import get_current_user
 from app.services.document_service import (
     ingest_document,
     list_documents,
     get_document,
     delete_document,
+    SUPPORTED_TYPES,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+# All accepted extensions flattened into one list
+ALL_EXTENSIONS = [ext for exts in SUPPORTED_TYPES.values() for ext in exts]
 
-# ── Response schemas (what the API sends back) ────────────────────────────────
 
 class DocumentResponse(BaseModel):
     id: int
     filename: str
     original_name: str
+    file_type: str
     total_chunks: int
     created_at: datetime
 
@@ -36,71 +39,76 @@ class DocumentResponse(BaseModel):
         from_attributes = True
 
 
-class UploadResponse(BaseModel):
-    message: str
-    document: DocumentResponse
-
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/upload", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Upload a PDF and run the full ingestion pipeline.
-    Returns the saved document with chunk count.
+    Upload any supported file type — PDF, image, TXT, or DOCX.
+    Automatically detects type and runs the right extraction pipeline.
     """
-    # Validate file type
-    if not file.filename.endswith(".pdf"):
+    # Check extension
+    ext = "." + file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ALL_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported. Please upload a .pdf file."
+            detail=f"Unsupported file type '{ext}'. Supported: {', '.join(ALL_EXTENSIONS)}"
         )
 
-    # Validate file size (max 20MB)
     file_bytes = await file.read()
+
+    # 20MB limit
     if len(file_bytes) > 20 * 1024 * 1024:
-        raise HTTPException(
-            status_code=400,
-            detail="File too large. Maximum size is 20MB."
-        )
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 20MB.")
 
     try:
         document = ingest_document(
             file_bytes=file_bytes,
             filename=file.filename,
             db=db,
+            user_id=current_user.id,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    return UploadResponse(
-        message=f"Document ingested successfully into {document.total_chunks} chunks.",
-        document=DocumentResponse.model_validate(document),
-    )
+    return {
+        "message": f"File processed into {document.total_chunks} chunks.",
+        "document": DocumentResponse.model_validate(document),
+    }
 
 
 @router.get("", response_model=list[DocumentResponse])
-def get_documents(db: Session = Depends(get_db)):
-    """List all uploaded documents, newest first."""
-    return list_documents(db)
+def get_documents(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List only the logged-in user's documents."""
+    return list_documents(db, user_id=current_user.id)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-def get_document_by_id(document_id: int, db: Session = Depends(get_db)):
+def get_one_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     doc = get_document(document_id, db)
-    if not doc:
+    if not doc or doc.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Document not found.")
     return doc
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_document(document_id: int, db: Session = Depends(get_db)):
-    """Delete a document and all its chunks."""
-    success = delete_document(document_id, db)
-    if not success:
+def remove_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = get_document(document_id, db)
+    if not doc or doc.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Document not found.")
+    delete_document(document_id, db)
