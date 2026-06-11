@@ -1,5 +1,5 @@
 """
-Run this to test the pipeline without needing PostgreSQL or OpenAI credits.
+
 Tests chunking and validates the project structure is correct.
 
 Usage:
@@ -49,12 +49,6 @@ def test_pdf_extraction():
     return True
 
 
-def test_openai_import():
-    """Test OpenAI client imports correctly."""
-    from openai import OpenAI
-    print("✅ OpenAI client importable")
-    print("   (Actual API calls need a real OPENAI_API_KEY in .env)")
-    return True
 
 
 def test_pgvector_import():
@@ -96,7 +90,6 @@ if __name__ == "__main__":
     tests = [
         test_project_structure,
         test_pdf_extraction,
-        test_openai_import,
         test_pgvector_import,
         test_chunking,
     ]
