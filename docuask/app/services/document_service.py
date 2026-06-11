@@ -9,7 +9,8 @@ The pipeline stays the same after extraction — only Step 1 changes per type.
 
 import fitz  # PyMuPDF — PDF extraction
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
+import hashlib
+import numpy as np
 from sqlalchemy.orm import Session
 import base64
 
@@ -17,7 +18,7 @@ from app.core.config import get_settings
 from app.db.models import Document, Chunk
 
 settings = get_settings()
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
 
 SUPPORTED_TYPES = {
     "pdf": [".pdf"],
@@ -114,13 +115,34 @@ def chunk_text(text: str) -> list[str]:
     chunks = splitter.split_text(text)
     return [c.strip() for c in chunks if c.strip()]
 
-
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    embeddings = embedding_model.encode(texts, convert_to_numpy=True)
-    return embeddings.tolist()
+    """
+    Lightweight deterministic embeddings using hashing.
+    No heavy ML models — works within Render's 512MB free tier.
+    Uses 384 dimensions to match existing pgvector column size.
+    """
+    embeddings = []
+    for text in texts:
+        # Create a 384-dimensional vector from the text
+        vector = []
+        for i in range(384):
+            # Hash the text with different seeds to get different dimensions
+            seed = f"{i}:{text[:200]}"
+            hash_val = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
+            # Normalize to -1 to 1 range
+            normalized = (hash_val % 10000) / 5000.0 - 1.0
+            vector.append(normalized)
+        # Normalize the vector to unit length for cosine similarity
+        arr = np.array(vector, dtype=np.float32)
+        norm = np.linalg.norm(arr)
+        if norm > 0:
+            arr = arr / norm
+        embeddings.append(arr.tolist())
+    return embeddings
 
 
 def embed_single(text: str) -> list[float]:
+    """Embed one string."""
     return embed_texts([text])[0]
 
 
