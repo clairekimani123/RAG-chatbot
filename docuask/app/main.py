@@ -22,7 +22,7 @@ app = FastAPI(
 # CORS — allow your React frontend to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Vite + CRA defaults
+    allow_origins=["https://ducoask.vercel.app", "http://localhost:5173", "http://localhost:3000"],  # Vite + CRA defaults
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
